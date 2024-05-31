@@ -1,10 +1,14 @@
 import streamlit as st
 import os
 from dotenv import load_dotenv
-from langchain_chroma import Chroma
+
 import google.generativeai as genai
 from util import make_prompt
 from database import DocumentDatabase
+import pysqlite3
+import sys
+sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
+from langchain_chroma import Chroma
 
 
 # Load environment variables
@@ -46,7 +50,7 @@ if query:
         # Call Gemini API to get the answer
         model = genai.GenerativeModel('gemini-1.0-pro-latest')
         answer = model.generate_content(prompt)
-        
+        print(answer.candidates[0].content.parts)
         # Display the result
         st.markdown("### Answer")
         st.markdown(answer.text)
