@@ -1,58 +1,98 @@
-import streamlit as st
 import os
+import streamlit as st
 from dotenv import load_dotenv
 
-import google.generativeai as genai
+from google.generativeai import configure, GenerativeModel
+from langchain_community.retrievers import BM25Retriever
+from langchain.retrievers import EnsembleRetriever
+from sentence_transformers import CrossEncoder
 from util import make_prompt
 from database import DocumentDatabase
-import pysqlite3
-import sys
-sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
-from langchain_chroma import Chroma
-
+from langchain_community.document_loaders import PyPDFLoader
 
 # Load environment variables
 load_dotenv()
 
 # Configure Google Gemini API
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# Initialize the database
-db = DocumentDatabase(persist_directory="./chroma_db")
-db.load_database()
+# Use @st.cache_resource for loading resources like models
+@st.cache_resource
+def load_model():
+    return CrossEncoder("mixedbread-ai/mxbai-rerank-base-v1")
 
-# Streamlit app
+# Use @st.cache_data for data processes like loading documents
+@st.cache_resource
+def load_database():
+    database = DocumentDatabase(persist_directory="./chroma_db")
+    return database.return_db()
+
+@st.cache_data
+def load_documents(pdf_path):
+    loader = PyPDFLoader(pdf_path)
+    return loader.load_and_split()
+
+db = load_database()
+pages = load_documents("book/ullman_the_complete_book.pdf")
+model = load_model()
+bm25_retriever = BM25Retriever.from_documents(pages)
+retriever_Chroma = db.as_retriever(search_kwargs={"k": 10})
+
+# Streamlit Interface Setup
 st.title("Question and Answer with Gemini AI")
-
-# Input for user query
 query = st.text_input("Enter your question:")
+use_reranking = st.sidebar.checkbox("Enable Re-Ranking", value=False)
+
+# Sidebar for dynamic weights adjustment
+st.sidebar.header("Adjust Retriever Weights")
+weight_bm25 = st.sidebar.slider("Weight for BM25 Retriever", 0.0, 1.0, 0.2, 0.1)
+weights = [weight_bm25, 1.0 - weight_bm25]
+ensemble_retriever = EnsembleRetriever(retrievers=[bm25_retriever, retriever_Chroma], weights=weights)
 
 if query:
-    # Perform similarity search in the database
-    similar_docs = db.similarity_search(query)
-    if similar_docs:
-        # Sort documents by relevance (assuming they are already sorted by the db.similarity_search function)
-        sorted_docs = sorted(similar_docs, key=lambda doc: doc.metadata.get('relevance_score', 0), reverse=True)
-        
-        # Display relevant pages in the left panel
-        with st.sidebar:
-            st.header("Relevant Pages")
-            for doc in sorted_docs:
-                page_number = doc.metadata.get('page', 'Unknown')
-                st.write(f"Page {page_number}: {doc.metadata.get('title', 'No Title')}")
+    # Document retrieval
+    docs = ensemble_retriever.get_relevant_documents(query)
 
-        # Use the most relevant document to generate the prompt for Gemini AI
-        context = sorted_docs[0].page_content
-        
-        # Generate the prompt for Gemini AI
-        prompt = make_prompt(query, context)
-        
-        # Call Gemini API to get the answer
-        model = genai.GenerativeModel('gemini-1.0-pro-latest')
-        answer = model.generate_content(prompt)
-        print(answer.candidates[0].content.parts)
+    if docs:
+        if use_reranking:
+            # Rerank the retrieved documents
+            documents = [doc.page_content for doc in docs]
+            ranked_docs = model.rank(query, documents, return_documents=True, top_k=3)
+            combined_text = " ".join([doc['text'] for doc in ranked_docs])
+            
+            print(ranked_docs)
+        else:
+            # Use the top 3 documents without reranking
+            ranked_docs = docs[:3]
+            print(ranked_docs)
+            combined_text = " ".join([doc.page_content for doc in ranked_docs])
+
+        # Generate prompt for Gemini AI using the most relevant documents
+        # if ranked_docs[0].get('text'):
+            
+        # else:
+            
+        # print('combined_text',combined_text)
+        prompt = make_prompt(query, combined_text)
+        gen_model = GenerativeModel('gemini-1.0-pro-latest')
+        answer = gen_model.generate_content(prompt)
+
         # Display the result
         st.markdown("### Answer")
-        st.markdown(answer.text)
+        st.markdown(answer.candidates[0].content.parts)
+
+        # Show the relevant pages in the sidebar
+        with st.sidebar:
+            st.header("Relevant Pages")
+            for index, doc in enumerate(ranked_docs):
+                if use_reranking:
+                    doc_id = doc['corpus_id']
+                    doc_content = doc['text']
+                else:
+                    doc_id = doc.metadata['page']
+                    doc_content = doc.page_content
+                st.write(f"Document ID: {doc_id}")
+                # Pass a unique key for each text_area
+                st.text_area("Content Preview", doc_content, height=100, key=f"doc_{index}")
     else:
         st.markdown("No relevant documents found.")

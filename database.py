@@ -13,7 +13,7 @@ class DocumentDatabase:
         self.persist_directory = persist_directory
         self.embedding_function = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
         self.db_path = os.path.join(self.persist_directory, "chroma.db")  # Ensure correct path to your database file
-
+        self.pages = []
         # Delete the database file if it exists
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
@@ -22,8 +22,8 @@ class DocumentDatabase:
 
     def add_document_from_pdf(self, pdf_path):
         loader = PyPDFLoader(pdf_path)
-        pages = loader.load_and_split()
-        self.db.add_documents(pages)
+        self.pages = loader.load_and_split()
+        self.db.add_documents(self.pages)
         
     def save_database(self):
         self.db.save()
@@ -31,9 +31,11 @@ class DocumentDatabase:
     def load_database(self):
         self.db = Chroma(persist_directory=self.persist_directory , embedding_function=self.embedding_function)
 
-    def similarity_search(self, query):
-        docs = self.db.similarity_search(query)
-        return docs
+    def similarity_search(self, query, k=10):
+        return self.db.similarity_search(query,k)
+    
+    def return_db(self):
+        return self.db
 
 if __name__ == "__main__":
     db = DocumentDatabase(persist_directory="./chroma_db")
