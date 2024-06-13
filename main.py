@@ -24,7 +24,7 @@ def load_model():
 # Use @st.cache_data for data processes like loading documents
 @st.cache_resource
 def load_database():
-    database = DocumentDatabase(persist_directory="./chroma_db")
+    database = DocumentDatabase(persist_directory="./chroma_db_claude")
     return database.return_db()
 
 @st.cache_data
@@ -35,13 +35,34 @@ def load_documents(pdf_path):
 db = load_database()
 pages = load_documents("book/ullman_the_complete_book.pdf")
 model = load_model()
-bm25_retriever = BM25Retriever.from_documents(pages)
-retriever_Chroma = db.as_retriever(search_kwargs={"k": 10})
 
+import json
+
+def load_json_file(file_path):
+    with open(file_path, 'r') as file:
+        return json.load(file)
+# bm25_retriever = BM25Retriever.from_documents(pages)
+retriever_Chroma = db.as_retriever(search_kwargs={"k": 10})
+file_path = r'/mnt/sda1/projects/Nam_exp/RAG_for_book/extracted_clauses.json'
+
+data_dict = load_json_file(file_path)
+from langchain_core.documents.base import Document
+document_objects = []
+for entry in data_dict:
+    for clause in entry['clauses']:
+        metadata = {
+            'section': entry['section'],
+            'title': entry['title'].strip(),
+            'page_num': entry['page_num']
+        }
+        document = Document(page_content=entry['title'] +' '+ clause, metadata=metadata)
+        document_objects.append(document)
+        
+bm25_retriever = BM25Retriever.from_documents(document_objects)        
 # Streamlit Interface Setup
 st.title("Question and Answer with Gemini AI")
 query = st.text_input("Enter your question:")
-use_reranking = st.sidebar.checkbox("Enable Re-Ranking", value=False)
+use_reranking = st.sidebar.checkbox("Enable Re-Ranking", value=True)
 
 # Sidebar for dynamic weights adjustment
 st.sidebar.header("Adjust Retriever Weights")
@@ -67,12 +88,6 @@ if query:
             print(ranked_docs)
             combined_text = " ".join([doc.page_content for doc in ranked_docs])
 
-        # Generate prompt for Gemini AI using the most relevant documents
-        # if ranked_docs[0].get('text'):
-            
-        # else:
-            
-        # print('combined_text',combined_text)
         prompt = make_prompt(query, combined_text)
         gen_model = GenerativeModel('gemini-1.0-pro-latest')
         answer = gen_model.generate_content(prompt)
@@ -89,7 +104,7 @@ if query:
                     doc_id = doc['corpus_id']
                     doc_content = doc['text']
                 else:
-                    doc_id = doc.metadata['page']
+                    doc_id = doc.metadata['page_num']
                     doc_content = doc.page_content
                 st.write(f"Document ID: {doc_id}")
                 # Pass a unique key for each text_area
