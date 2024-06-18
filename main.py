@@ -33,7 +33,6 @@ def load_documents(pdf_path):
     return loader.load_and_split()
 
 db = load_database()
-pages = load_documents("book/ullman_the_complete_book.pdf")
 model = load_model()
 
 import json
@@ -42,7 +41,7 @@ def load_json_file(file_path):
     with open(file_path, 'r') as file:
         return json.load(file)
 # bm25_retriever = BM25Retriever.from_documents(pages)
-retriever_Chroma = db.as_retriever(search_kwargs={"k": 10})
+retriever_Chroma = db.as_retriever(search_kwargs={"k": 100})
 file_path = r'/mnt/sda1/projects/Nam_exp/RAG_for_book/extracted_clauses.json'
 
 data_dict = load_json_file(file_path)
@@ -77,16 +76,22 @@ if query:
     if docs:
         if use_reranking:
             # Rerank the retrieved documents
+            # print(docs)
             documents = [doc.page_content for doc in docs]
-            ranked_docs = model.rank(query, documents, return_documents=True, top_k=3)
-            combined_text = " ".join([doc['text'] for doc in ranked_docs])
+            ranked_indices = model.rank(query, documents, return_documents=False, top_k=3)
+            
+            # metadata = [doc.metadata for doc in docs]
+            
+            print("ranked_indices",ranked_indices)
+            indices =[ranked_indice['corpus_id'] for  ranked_indice in ranked_indices]
+            ranked_docs = [docs[idx] for idx in indices]
             
             print(ranked_docs)
         else:
             # Use the top 3 documents without reranking
             ranked_docs = docs[:3]
-            print(ranked_docs)
-            combined_text = " ".join([doc.page_content for doc in ranked_docs])
+
+        combined_text = " ".join([doc.page_content for doc in ranked_docs])
 
         prompt = make_prompt(query, combined_text)
         gen_model = GenerativeModel('gemini-1.0-pro-latest')
@@ -94,18 +99,14 @@ if query:
 
         # Display the result
         st.markdown("### Answer")
-        st.markdown(answer.candidates[0].content.parts)
+        st.markdown(answer.candidates[0].content.parts[0])
 
         # Show the relevant pages in the sidebar
         with st.sidebar:
             st.header("Relevant Pages")
             for index, doc in enumerate(ranked_docs):
-                if use_reranking:
-                    doc_id = doc['corpus_id']
-                    doc_content = doc['text']
-                else:
-                    doc_id = doc.metadata['page_num']
-                    doc_content = doc.page_content
+                doc_id = doc.metadata['section']  # Change made here
+                doc_content = doc.page_content
                 st.write(f"Document ID: {doc_id}")
                 # Pass a unique key for each text_area
                 st.text_area("Content Preview", doc_content, height=100, key=f"doc_{index}")
