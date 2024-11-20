@@ -6,7 +6,7 @@ from google.generativeai import configure, GenerativeModel
 from langchain_community.retrievers import BM25Retriever
 from langchain.retrievers import EnsembleRetriever
 from sentence_transformers import CrossEncoder
-from util import make_prompt
+from utils import make_prompt,load_json_file
 from database import DocumentDatabase
 from langchain_community.document_loaders import PyPDFLoader
 
@@ -24,25 +24,15 @@ def load_model():
 # Use @st.cache_data for data processes like loading documents
 @st.cache_resource
 def load_database():
-    database = DocumentDatabase(persist_directory="./chroma_db_claude")
+    database = DocumentDatabase(persist_directory="./chroma_db_claude_NBC_2020")
     return database.return_db()
-
-@st.cache_data
-def load_documents(pdf_path):
-    loader = PyPDFLoader(pdf_path)
-    return loader.load_and_split()
 
 db = load_database()
 model = load_model()
 
-import json
-
-def load_json_file(file_path):
-    with open(file_path, 'r') as file:
-        return json.load(file)
 # bm25_retriever = BM25Retriever.from_documents(pages)
 retriever_Chroma = db.as_retriever(search_kwargs={"k": 100})
-file_path = r'/mnt/sda1/projects/Nam_exp/RAG_for_book/extracted_clauses.json'
+file_path = r'data/extracted_clauses_OBC_2020.json'
 
 data_dict = load_json_file(file_path)
 from langchain_core.documents.base import Document
@@ -54,18 +44,19 @@ for entry in data_dict:
             'title': entry['title'].strip(),
             'page_num': entry['page_num']
         }
-        document = Document(page_content=entry['title'] +' '+ clause, metadata=metadata)
+        clause = [item for item in clause if item is not None]
+        document = Document(page_content=entry['title'] +' '+ ' '.join(clause), metadata=metadata)
         document_objects.append(document)
         
 bm25_retriever = BM25Retriever.from_documents(document_objects)        
 # Streamlit Interface Setup
-st.title("Question and Answer with Gemini AI")
+st.title("Question and Answer about BUILDING CODE")
 query = st.text_input("Enter your question:")
 use_reranking = st.sidebar.checkbox("Enable Re-Ranking", value=True)
 
 # Sidebar for dynamic weights adjustment
 st.sidebar.header("Adjust Retriever Weights")
-weight_bm25 = st.sidebar.slider("Weight for BM25 Retriever", 0.0, 1.0, 0.2, 0.1)
+weight_bm25 = st.sidebar.slider("Weight for BM25 Retriever", 0.0, 1.0, 0.4, 0.1)
 weights = [weight_bm25, 1.0 - weight_bm25]
 ensemble_retriever = EnsembleRetriever(retrievers=[bm25_retriever, retriever_Chroma], weights=weights)
 
@@ -76,30 +67,26 @@ if query:
     if docs:
         if use_reranking:
             # Rerank the retrieved documents
-            # print(docs)
             documents = [doc.page_content for doc in docs]
-            ranked_indices = model.rank(query, documents, return_documents=False, top_k=3)
+            ranked_indices = model.rank(query, documents, return_documents=False, top_k=5)
+
             
-            # metadata = [doc.metadata for doc in docs]
-            
-            print("ranked_indices",ranked_indices)
             indices =[ranked_indice['corpus_id'] for  ranked_indice in ranked_indices]
             ranked_docs = [docs[idx] for idx in indices]
             
-            print(ranked_docs)
         else:
             # Use the top 3 documents without reranking
-            ranked_docs = docs[:3]
+            ranked_docs = docs[:5]
 
-        combined_text = " ".join([doc.page_content for doc in ranked_docs])
-
+        combined_text =  " ".join([doc.page_content for doc in ranked_docs])
+        print("combined_text",combined_text)
         prompt = make_prompt(query, combined_text)
         gen_model = GenerativeModel('gemini-1.0-pro-latest')
         answer = gen_model.generate_content(prompt)
 
         # Display the result
         st.markdown("### Answer")
-        st.markdown(answer.candidates[0].content.parts[0])
+        st.markdown(answer.candidates[0].content.parts[0].text)
 
         # Show the relevant pages in the sidebar
         with st.sidebar:
