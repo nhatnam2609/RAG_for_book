@@ -1,4 +1,4 @@
-# RAG-Core-Service Project README
+# RAG-For-BOOK Project README
 
 ## Project Overview
 
